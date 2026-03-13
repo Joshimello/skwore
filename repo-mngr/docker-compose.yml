@@ -1,0 +1,10 @@
+services:
+  repo-mngr:
+    image: repo-mngr:latest
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ${DATA_DIR}:${DATA_DIR}
+    ports:
+      - "${PORT:-8080}:${PORT:-8080}"
+    env_file: .env
+    restart: unless-stopped

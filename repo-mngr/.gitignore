@@ -1,0 +1,4 @@
+cloudflared-credentials.json
+.env
+repo-mngr
+data/
