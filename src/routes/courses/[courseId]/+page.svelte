@@ -85,9 +85,9 @@
 			<div class="flex items-center gap-2">
 				<Dialog.Root bind:open={addDialogOpen}>
 					<Dialog.Trigger
-						class="bg-primary text-primary-foreground hover:bg-primary/90 rounded-md px-3 py-1.5 text-sm font-medium"
+						class="border-border hover:bg-muted rounded-md border px-3 py-1.5 text-sm"
 					>
-						Add Submission
+						+ Add Submission
 					</Dialog.Trigger>
 					<Dialog.Content class="sm:max-w-md">
 						<Dialog.Header>
@@ -97,8 +97,9 @@
 						<form method="post" action="?/addManual" use:sfEnhance class="space-y-4 pt-2">
 							<div class="grid grid-cols-2 gap-3">
 								<div class="space-y-1">
-									<label class="text-sm font-medium">Student ID *</label>
+									<label for="studentId" class="text-sm font-medium">Student ID *</label>
 									<input
+										id="studentId"
 										name="studentId"
 										bind:value={$form.studentId}
 										class="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
@@ -107,8 +108,9 @@
 									{#if $errors.studentId}<p class="text-destructive text-xs">{$errors.studentId}</p>{/if}
 								</div>
 								<div class="space-y-1">
-									<label class="text-sm font-medium">Student Name *</label>
+									<label for="studentName" class="text-sm font-medium">Student Name *</label>
 									<input
+										id="studentName"
 										name="studentName"
 										bind:value={$form.studentName}
 										class="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
@@ -118,8 +120,9 @@
 								</div>
 							</div>
 							<div class="space-y-1">
-								<label class="text-sm font-medium">Assignment (optional)</label>
+								<label for="assignmentId" class="text-sm font-medium">Assignment (optional)</label>
 								<select
+									id="assignmentId"
 									name="assignmentId"
 									bind:value={$form.assignmentId}
 									class="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
@@ -131,8 +134,9 @@
 								</select>
 							</div>
 							<div class="space-y-1">
-								<label class="text-sm font-medium">Repo URL (optional)</label>
+								<label for="repoUrl" class="text-sm font-medium">Repo URL (optional)</label>
 								<input
+									id="repoUrl"
 									name="repoUrl"
 									bind:value={$form.repoUrl}
 									type="url"
@@ -143,8 +147,9 @@
 							</div>
 							<div class="grid grid-cols-2 gap-3">
 								<div class="space-y-1">
-									<label class="text-sm font-medium">Pages URL</label>
+									<label for="pagesUrl" class="text-sm font-medium">Pages URL</label>
 									<input
+										id="pagesUrl"
 										name="pagesUrl"
 										bind:value={$form.pagesUrl}
 										type="url"
@@ -153,8 +158,9 @@
 									/>
 								</div>
 								<div class="space-y-1">
-									<label class="text-sm font-medium">Commit SHA</label>
+									<label for="commitSha" class="text-sm font-medium">Commit SHA</label>
 									<input
+										id="commitSha"
 										name="commitSha"
 										bind:value={$form.commitSha}
 										class="border-input bg-background w-full rounded-md border px-3 py-2 text-sm font-mono"

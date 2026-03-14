@@ -91,6 +91,7 @@ func (app *App) processJob(job *Job) {
 	job.Result = result
 	log.Printf("job %s: done (hasDist=%v, criteria=%d)", job.ID, result.HasDist, len(result.Criteria))
 
+	app.persistJob(job)
 	app.sendWebhook(job)
 }
 
@@ -148,5 +149,22 @@ func (app *App) failJob(job *Job, errMsg string) {
 	}
 
 	log.Printf("job %s: failed — %s", job.ID, errMsg)
+	app.persistJob(job)
 	app.sendWebhook(job)
+}
+
+func (app *App) persistJob(job *Job) {
+	jobDir := filepath.Join(app.cfg.DataDir, job.ID)
+	if err := os.MkdirAll(jobDir, 0777); err != nil {
+		log.Printf("job %s: persistJob mkdir failed: %v", job.ID, err)
+		return
+	}
+	data, err := json.Marshal(job.toResponse())
+	if err != nil {
+		log.Printf("job %s: persistJob marshal failed: %v", job.ID, err)
+		return
+	}
+	if err := os.WriteFile(filepath.Join(jobDir, "job.json"), data, 0644); err != nil {
+		log.Printf("job %s: persistJob write failed: %v", job.ID, err)
+	}
 }

@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
 	import { invalidateAll } from '$app/navigation';
-	import { onDestroy } from 'svelte';
+	import { onMount, onDestroy } from 'svelte';
 	import GradeDialog from '$lib/components/GradeDialog.svelte';
 	import * as Dialog from '$lib/components/ui/dialog/index.js';
 
@@ -18,6 +18,7 @@
 		formResponseId: string | null;
 		repoJobId: string | null;
 		repoJobStatus: string | null;
+		distUrl: string | null;
 		assignmentId: string | null;
 		assignmentName: string | null;
 		gradeId: string | null;
@@ -84,6 +85,44 @@
 		return sorting[0].desc ? '↓' : '↑';
 	}
 
+	let previewUrls = $state<Map<string, string>>(new Map());
+	let previewLoading = $state<Set<string>>(new Set());
+
+	async function startPreview(submissionId: string) {
+		previewLoading = new Set([...previewLoading, submissionId]);
+		try {
+			const res = await fetch(`/api/preview/${submissionId}`, { method: 'POST' });
+			if (res.ok) {
+				const { previewUrl } = await res.json();
+				previewUrls = new Map([...previewUrls, [submissionId, previewUrl]]);
+			}
+		} finally {
+			previewLoading = new Set([...previewLoading].filter((id) => id !== submissionId));
+		}
+	}
+
+	async function stopPreview(submissionId: string) {
+		await fetch(`/api/preview/${submissionId}`, { method: 'DELETE' });
+		const next = new Map(previewUrls);
+		next.delete(submissionId);
+		previewUrls = next;
+	}
+
+	onMount(() => {
+		for (const sub of submissions) {
+			if (sub.distUrl && sub.repoJobStatus === 'done') {
+				fetch(`/api/preview/${sub.id}`)
+					.then(r => r.ok ? r.json() : null)
+					.then(data => {
+						if (data?.previewUrl) {
+							previewUrls = new Map([...previewUrls, [sub.id, data.previewUrl]]);
+						}
+					})
+					.catch(() => {});
+			}
+		}
+	});
+
 	let gradeDialogOpen = $state(false);
 	let gradeDialogSubmission = $state<Submission | null>(null);
 
@@ -131,14 +170,6 @@
 	});
 	onDestroy(() => { if (pollTimer) clearTimeout(pollTimer); });
 
-	function aiStatusClass(status: string | null) {
-		if (status === 'done') return 'bg-green-100 text-green-800';
-		if (status === 'failed') return 'bg-red-100 text-red-800';
-		if (status === 'running') return 'bg-blue-100 text-blue-800';
-		if (status === 'queued') return 'bg-muted text-muted-foreground';
-		return '';
-	}
-
 	function statusBadgeClass(status: string) {
 		if (status === 'late') return 'bg-yellow-100 text-yellow-800';
 		if (status === 'missing') return 'bg-red-100 text-red-800';
@@ -148,13 +179,13 @@
 
 <div class="space-y-3">
 	<!-- Filters -->
-	<div class="flex flex-wrap gap-2">
+	<div class="flex flex-wrap items-center gap-2">
 		<input
 			type="text"
-			placeholder="Filter by student name or ID…"
+			placeholder="Search student…"
 			bind:value={nameFilter}
 			oninput={() => (pageIndex = 0)}
-			class="border-input bg-background rounded-md border px-3 py-1.5 text-sm w-64"
+			class="border-input bg-background rounded-md border px-3 py-1.5 text-sm w-48"
 		/>
 		<select
 			bind:value={assignmentFilter}
@@ -167,39 +198,46 @@
 				<option value={a.id}>{a.name}</option>
 			{/each}
 		</select>
-		<span class="text-muted-foreground self-center text-sm">{filtered.length} submission{filtered.length !== 1 ? 's' : ''}</span>
+		<span class="text-muted-foreground text-sm">{filtered.length} submission{filtered.length !== 1 ? 's' : ''}</span>
 	</div>
 
 	<!-- Table -->
 	<div class="overflow-auto rounded-lg border border-border">
 		<table class="w-full text-sm border-collapse">
 			<thead>
-				<tr class="bg-muted/50 border-b border-border">
-					{#each ['studentId', 'studentName', 'assignmentName', 'status', 'repoUrl', 'gradeId', 'repoJobStatus', 'submittedAt'] as col}
+				<tr class="bg-muted/50 border-b border-border text-xs text-muted-foreground uppercase tracking-wide">
+					{#each ['studentName', 'assignmentName', 'gradeId', 'repoJobStatus'] as col}
 						<th
-							class="px-3 py-2 text-left font-medium whitespace-nowrap cursor-pointer select-none hover:bg-muted/70"
+							class="px-4 py-2.5 text-left font-medium cursor-pointer select-none hover:text-foreground whitespace-nowrap"
 							onclick={() => toggleSort(col)}
 						>
-							{col === 'studentId' ? 'Student ID' :
-							 col === 'studentName' ? 'Student' :
+							{col === 'studentName' ? 'Student' :
 							 col === 'assignmentName' ? 'Assignment' :
-							 col === 'status' ? 'Status' :
-							 col === 'repoUrl' ? 'Repo' :
-							 col === 'gradeId' ? 'Grade' :
-							 col === 'repoJobStatus' ? 'AI' :
-							 'Submitted'}
-							<span class="text-muted-foreground ml-1 text-xs">{sortIcon(col)}</span>
+							 col === 'gradeId' ? 'Grade' : 'AI'}
+							<span class="ml-1">{sortIcon(col)}</span>
 						</th>
 					{/each}
-					<th class="px-3 py-2 text-left font-medium">Actions</th>
+					<th class="px-4 py-2.5 text-left font-medium">Preview</th>
+					<th class="px-4 py-2.5 text-right font-medium">Links</th>
 				</tr>
 			</thead>
 			<tbody>
 				{#each paged as sub (sub.id)}
-					<tr class="border-b border-border last:border-0 hover:bg-muted/30">
-						<td class="px-3 py-2 font-mono text-xs">{sub.studentId}</td>
-						<td class="px-3 py-2 whitespace-nowrap">{sub.studentName}</td>
-						<td class="px-3 py-2">
+					<tr class="border-b border-border last:border-0 hover:bg-muted/20 group">
+
+						<!-- Student: name + ID + status badge -->
+						<td class="px-4 py-3">
+							<div class="font-medium text-foreground leading-tight">{sub.studentName}</div>
+							<div class="flex items-center gap-1.5 mt-0.5">
+								<span class="text-xs text-muted-foreground font-mono">{sub.studentId}</span>
+								<span class="rounded-full px-1.5 py-px text-[10px] font-medium leading-tight {statusBadgeClass(sub.status)}">
+									{sub.status}
+								</span>
+							</div>
+						</td>
+
+						<!-- Assignment -->
+						<td class="px-4 py-3">
 							{#if sub.assignmentId}
 								<span class="text-sm">{sub.assignmentName}</span>
 							{:else}
@@ -221,35 +259,31 @@
 								</form>
 							{/if}
 						</td>
-						<td class="px-3 py-2">
-							<span class="rounded-full px-2 py-0.5 text-xs font-medium {statusBadgeClass(sub.status)}">
-								{sub.status}
-							</span>
-						</td>
-						<td class="px-3 py-2">
-							{#if sub.repoUrl}
-								<a href={sub.repoUrl} target="_blank" rel="noopener" class="text-primary hover:underline text-xs font-mono truncate max-w-[120px] block">
-									{sub.repoUrl.replace(/^https?:\/\//, '').slice(0, 30)}{sub.repoUrl.length > 40 ? '…' : ''}
-								</a>
-							{:else}
-								<span class="text-muted-foreground">—</span>
-							{/if}
-						</td>
-						<td class="px-3 py-2">
+
+						<!-- Grade -->
+						<td class="px-4 py-3">
 							{#if sub.assignmentId}
-								{#if sub.gradeId}
+								{#if sub.gradeFinalized}
 									<button
 										type="button"
 										onclick={() => openGradeDialog(sub)}
-										class="rounded-full px-2 py-0.5 text-xs font-medium cursor-pointer {sub.gradeFinalized ? 'bg-green-100 text-green-800 hover:bg-green-200' : 'bg-yellow-100 text-yellow-800 hover:bg-yellow-200'}"
+										class="inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-xs font-medium bg-green-100 text-green-800 hover:bg-green-200 cursor-pointer"
 									>
-										{sub.gradeFinalized ? 'Finalized' : 'Draft'}
+										<span>✓</span> Finalized
+									</button>
+								{:else if sub.gradeId}
+									<button
+										type="button"
+										onclick={() => openGradeDialog(sub)}
+										class="inline-flex items-center rounded-md px-2.5 py-1 text-xs font-medium bg-yellow-100 text-yellow-800 hover:bg-yellow-200 cursor-pointer"
+									>
+										Draft
 									</button>
 								{:else}
 									<button
 										type="button"
 										onclick={() => openGradeDialog(sub)}
-										class="text-primary hover:underline text-xs font-medium"
+										class="inline-flex items-center rounded-md px-2.5 py-1 text-xs font-medium border border-dashed border-border text-muted-foreground hover:border-primary hover:text-primary cursor-pointer"
 									>
 										Grade
 									</button>
@@ -258,55 +292,118 @@
 								<span class="text-muted-foreground text-xs">—</span>
 							{/if}
 						</td>
-						<td class="px-3 py-2 text-xs">
-							<div class="flex items-center gap-2">
-							{#if sub.repoJobStatus && sub.repoJobStatus !== 'failed'}
-								<span class="rounded-full px-2 py-0.5 text-xs font-medium {aiStatusClass(sub.repoJobStatus)}">
-									{sub.repoJobStatus}
-								</span>
-							{:else if sub.repoUrl && sub.assignmentId}
-								<form method="post" action="?/analyze" use:enhance>
-									<input type="hidden" name="submissionId" value={sub.id} />
-									<button type="submit" class="text-primary hover:underline text-xs font-medium">
-										{sub.repoJobStatus === 'failed' ? 'Retry' : 'Analyze'}
+
+						<!-- AI: status + analyze/retry + logs -->
+						<td class="px-4 py-3">
+							<div class="flex flex-col gap-1">
+								{#if sub.repoJobStatus === 'done'}
+									<span class="inline-flex w-fit items-center rounded-md px-2 py-0.5 text-xs font-medium bg-green-100 text-green-800">done</span>
+								{:else if sub.repoJobStatus === 'running'}
+									<span class="inline-flex w-fit items-center rounded-md px-2 py-0.5 text-xs font-medium bg-blue-100 text-blue-800">running…</span>
+								{:else if sub.repoJobStatus === 'queued'}
+									<span class="inline-flex w-fit items-center rounded-md px-2 py-0.5 text-xs font-medium bg-muted text-muted-foreground">queued</span>
+								{:else if sub.repoUrl && sub.assignmentId}
+									<form method="post" action="?/analyze" use:enhance>
+										<input type="hidden" name="submissionId" value={sub.id} />
+										<button type="submit" class="text-xs text-primary hover:underline font-medium">
+											{sub.repoJobStatus === 'failed' ? '↺ Retry' : 'Analyze'}
+										</button>
+									</form>
+								{:else}
+									<span class="text-muted-foreground text-xs">—</span>
+								{/if}
+								{#if sub.repoJobId}
+									<button
+										type="button"
+										onclick={() => openLogDialog(sub)}
+										class="text-[11px] text-muted-foreground hover:text-foreground w-fit"
+									>
+										Logs
 									</button>
-								</form>
-							{:else}
-								<span class="text-muted-foreground">—</span>
-							{/if}
-							{#if sub.repoJobId}
-								<button
-									type="button"
-									onclick={() => openLogDialog(sub)}
-									class="text-muted-foreground hover:text-foreground text-xs underline"
-								>
-									Logs
-								</button>
-							{/if}
+								{/if}
 							</div>
 						</td>
-						<td class="px-3 py-2 text-xs text-muted-foreground whitespace-nowrap">
-							{new Date(sub.submittedAt).toLocaleDateString()}
-						</td>
-						<td class="px-3 py-2">
-							<form method="post" action="?/removeSubmission" use:enhance>
-								<input type="hidden" name="submissionId" value={sub.id} />
+
+						<!-- Preview -->
+						<td class="px-4 py-3">
+							{#if sub.distUrl === null || sub.repoJobStatus !== 'done'}
+								<span class="text-muted-foreground text-xs">—</span>
+							{:else if previewLoading.has(sub.id)}
+								<span class="text-muted-foreground text-xs">Starting…</span>
+							{:else if previewUrls.has(sub.id)}
+								<div class="flex items-center gap-2">
+									<a
+										href={previewUrls.get(sub.id)}
+										target="_blank"
+										rel="noopener"
+										class="inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-xs font-medium bg-primary/10 text-primary hover:bg-primary/20"
+									>
+										Open ↗
+									</a>
+									<button
+										type="button"
+										onclick={() => stopPreview(sub.id)}
+										class="text-xs text-muted-foreground hover:text-destructive"
+									>
+										Stop
+									</button>
+								</div>
+							{:else}
 								<button
-									type="submit"
-									class="text-destructive hover:text-destructive/80 text-xs"
-									onclick={(e) => {
-										if (!confirm('Remove this submission?')) e.preventDefault();
-									}}
+									type="button"
+									onclick={() => startPreview(sub.id)}
+									class="inline-flex items-center rounded-md px-2.5 py-1 text-xs font-medium border border-border hover:border-primary hover:text-primary"
 								>
-									Remove
+									Preview
 								</button>
-							</form>
+							{/if}
+						</td>
+
+						<!-- Links + remove -->
+						<td class="px-4 py-3">
+							<div class="flex items-center justify-end gap-2">
+								{#if sub.repoUrl}
+									<a
+										href={sub.repoUrl}
+										target="_blank"
+										rel="noopener"
+										title="Repository"
+										class="text-muted-foreground hover:text-foreground text-xs"
+									>
+										Repo ↗
+									</a>
+								{/if}
+								{#if sub.pagesUrl}
+									<a
+										href={sub.pagesUrl}
+										target="_blank"
+										rel="noopener"
+										title="Pages"
+										class="text-muted-foreground hover:text-foreground text-xs"
+									>
+										Pages ↗
+									</a>
+								{/if}
+								<form method="post" action="?/removeSubmission" use:enhance>
+									<input type="hidden" name="submissionId" value={sub.id} />
+									<button
+										type="submit"
+										title="Remove submission"
+										class="text-muted-foreground hover:text-destructive text-xs opacity-0 group-hover:opacity-100 transition-opacity"
+										onclick={(e) => {
+											if (!confirm('Remove this submission?')) e.preventDefault();
+										}}
+									>
+										✕
+									</button>
+								</form>
+							</div>
 						</td>
 					</tr>
 				{/each}
 				{#if paged.length === 0}
 					<tr>
-						<td colspan="9" class="px-3 py-8 text-center text-muted-foreground text-sm">
+						<td colspan="6" class="px-4 py-10 text-center text-muted-foreground text-sm">
 							No submissions found.
 						</td>
 					</tr>

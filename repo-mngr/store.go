@@ -1,7 +1,12 @@
 package main
 
 import (
+	"encoding/json"
+	"log"
+	"net/http"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"sync"
 	"time"
 )
@@ -66,10 +71,10 @@ type Job struct {
 	callbackURL string
 
 	// preview state — protected by mu
-	mu           sync.Mutex
-	previewBun   *exec.Cmd
-	previewCF    *exec.Cmd
-	previewTimer *time.Timer
+	mu                  sync.Mutex
+	previewHTTP         *http.Server
+	previewCF           *exec.Cmd
+	previewLastAccessed int64
 }
 
 func (j *Job) toResponse() JobResponse {
@@ -112,4 +117,91 @@ func (s *Store) Delete(id string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.jobs, id)
+}
+
+// MigrateFromDisk synthesizes job.json for old job dirs that have out/result.json
+// but were created before job persistence was added. Safe to call multiple times.
+func MigrateFromDisk(dataDir string) {
+	entries, err := os.ReadDir(dataDir)
+	if err != nil {
+		return
+	}
+	n := 0
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		dir := filepath.Join(dataDir, entry.Name())
+		jobFile := filepath.Join(dir, "job.json")
+		if _, err := os.Stat(jobFile); err == nil {
+			continue // already migrated
+		}
+		resultFile := filepath.Join(dir, "out", "result.json")
+		data, err := os.ReadFile(resultFile)
+		if err != nil {
+			continue
+		}
+		var out graderOutput
+		if err := json.Unmarshal(data, &out); err != nil {
+			continue
+		}
+		resp := JobResponse{
+			JobID:  entry.Name(),
+			Status: StatusDone,
+			Result: &JobResult{Criteria: out.Criteria, Log: out.Log},
+		}
+		if info, err := entry.Info(); err == nil {
+			resp.CreatedAt = info.ModTime()
+		}
+		migrated, err := json.Marshal(resp)
+		if err != nil {
+			continue
+		}
+		if err := os.WriteFile(jobFile, migrated, 0644); err != nil {
+			log.Printf("store: migration write failed for %s: %v", entry.Name(), err)
+			continue
+		}
+		n++
+	}
+	if n > 0 {
+		log.Printf("store: migrated %d legacy job dirs to job.json", n)
+	}
+}
+
+// LoadFromDisk scans dataDir for job.json files written by persistJob and
+// restores completed/failed jobs into the store. Called once at startup.
+func (s *Store) LoadFromDisk(dataDir string) {
+	entries, err := os.ReadDir(dataDir)
+	if err != nil {
+		return
+	}
+	n := 0
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(dataDir, entry.Name(), "job.json"))
+		if err != nil {
+			continue
+		}
+		var resp JobResponse
+		if err := json.Unmarshal(data, &resp); err != nil {
+			log.Printf("store: skipping malformed job.json in %s: %v", entry.Name(), err)
+			continue
+		}
+		s.Set(&Job{
+			ID:           resp.JobID,
+			SubmissionID: resp.SubmissionID,
+			Status:       resp.Status,
+			CreatedAt:    resp.CreatedAt,
+			StartedAt:    resp.StartedAt,
+			CompletedAt:  resp.CompletedAt,
+			Result:       resp.Result,
+			Error:        resp.Error,
+		})
+		n++
+	}
+	if n > 0 {
+		log.Printf("store: loaded %d jobs from disk", n)
+	}
 }

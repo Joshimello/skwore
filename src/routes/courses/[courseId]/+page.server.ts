@@ -45,6 +45,7 @@ export const load: PageServerLoad = async ({ params }) => {
 			formResponseId: submission.formResponseId,
 			repoJobId: submission.repoJobId,
 			repoJobStatus: submission.repoJobStatus,
+			distUrl: submission.distUrl,
 			assignmentId: submission.assignmentId,
 			assignmentName: assignment.name,
 			gradeId: submissionGrade.id,

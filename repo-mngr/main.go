@@ -25,6 +25,8 @@ func main() {
 		queue: make(chan string, 1000),
 	}
 
+	MigrateFromDisk(cfg.DataDir)
+	app.store.LoadFromDisk(cfg.DataDir)
 	app.startWorkers()
 
 	mux := http.NewServeMux()

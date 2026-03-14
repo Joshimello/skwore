@@ -7,7 +7,7 @@ Rubric criteria:
 
 Instructions:
 1. cd /repo and inspect the project structure
-2. Build the project and run its tests
+2. Build the project and run its tests. After building, ensure the output is in /repo/dist (rename from build/, public/, or output/ if needed — the grader will copy whatever is in /repo/dist as the deliverable).
 3. For each criterion, evaluate the submission honestly based on what you observe
 4. At the very end of your response, output ONLY this JSON block and nothing after it:
 {"criteria":[{"criterionId":"...","status":"pass|unsure|fail","suggestedScore":0,"comment":"..."}]}

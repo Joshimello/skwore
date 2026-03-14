@@ -86,7 +86,7 @@ func (app *App) handleStartPreview(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Already running — return existing URL
-	if job.previewBun != nil {
+	if job.previewHTTP != nil {
 		if job.Result.PreviewURL != nil {
 			writeJSON(w, http.StatusConflict, map[string]string{"previewUrl": *job.Result.PreviewURL})
 		} else {

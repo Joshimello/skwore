@@ -2,17 +2,18 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"log"
 	"net"
+	"net/http"
 	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 )
 
-// startPreview starts a bun static server + cloudflared tunnel for a completed job.
+// startPreview starts a Go static file server + cloudflared tunnel for a completed job.
 // Caller must hold job.mu.
 func (app *App) startPreview(job *Job) (string, error) {
 	distDir := filepath.Join(app.cfg.DataDir, job.ID, "out", "dist")
@@ -22,11 +23,20 @@ func (app *App) startPreview(job *Job) (string, error) {
 		return "", fmt.Errorf("no free port available: %w", err)
 	}
 
-	// Start serve (pre-installed globally in the image)
-	bunCmd := exec.Command("serve", "-s", distDir, "-l", strconv.Itoa(port))
-	if err := bunCmd.Start(); err != nil {
-		return "", fmt.Errorf("serve start failed: %w", err)
-	}
+	// Start Go's own static file server so we can track last-access time
+	mux := http.NewServeMux()
+	mux.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		job.mu.Lock()
+		job.previewLastAccessed = time.Now().Unix()
+		job.mu.Unlock()
+		http.FileServer(http.Dir(distDir)).ServeHTTP(w, r)
+	}))
+	httpServer := &http.Server{Addr: fmt.Sprintf(":%d", port), Handler: mux}
+	go func() {
+		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Printf("preview: file server error for job %s: %v", job.ID, err)
+		}
+	}()
 	log.Printf("preview: started static server for job %s on port %d", job.ID, port)
 
 	// Start cloudflared tunnel for this specific subdomain
@@ -36,18 +46,17 @@ func (app *App) startPreview(job *Job) (string, error) {
 	cfCmd := exec.Command(
 		"cloudflared", "tunnel",
 		"--credentials-file", "/etc/cloudflared/tunnel.json",
-		"--hostname", hostname,
-		"--url", localURL,
-		"run", app.cfg.CloudflareTunnelName,
+		"run", "--url", localURL,
+		app.cfg.CloudflareTunnelName,
 	)
 
 	stderr, err := cfCmd.StderrPipe()
 	if err != nil {
-		bunCmd.Process.Kill()
+		httpServer.Shutdown(context.Background())
 		return "", fmt.Errorf("cloudflared stderr pipe failed: %w", err)
 	}
 	if err := cfCmd.Start(); err != nil {
-		bunCmd.Process.Kill()
+		httpServer.Shutdown(context.Background())
 		return "", fmt.Errorf("cloudflared start failed: %w", err)
 	}
 
@@ -71,48 +80,57 @@ func (app *App) startPreview(job *Job) (string, error) {
 	select {
 	case ok := <-connected:
 		if !ok {
-			bunCmd.Process.Kill()
+			httpServer.Shutdown(context.Background())
 			cfCmd.Process.Kill()
 			return "", fmt.Errorf("cloudflared failed to connect")
 		}
 	case <-time.After(30 * time.Second):
-		bunCmd.Process.Kill()
+		httpServer.Shutdown(context.Background())
 		cfCmd.Process.Kill()
 		return "", fmt.Errorf("cloudflared connection timeout")
 	}
 
 	previewURL := fmt.Sprintf("https://%s", hostname)
-	job.previewBun = bunCmd
+	job.previewHTTP = httpServer
 	job.previewCF = cfCmd
+	job.previewLastAccessed = time.Now().Unix()
 	if job.Result != nil {
 		job.Result.PreviewURL = &previewURL
 	}
 
-	// Auto-kill after TTL
-	if app.cfg.PreviewTTLSeconds > 0 {
-		ttl := time.Duration(app.cfg.PreviewTTLSeconds) * time.Second
-		job.previewTimer = time.AfterFunc(ttl, func() {
+	// Inactivity watcher — shuts down after PreviewTTLSeconds of no requests
+	inactivitySeconds := app.cfg.PreviewTTLSeconds
+	go func() {
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+		for range ticker.C {
 			job.mu.Lock()
-			defer job.mu.Unlock()
-			log.Printf("preview: TTL expired for job %s", job.ID)
-			app.stopPreview(job)
-		})
-	}
+			idle := time.Since(time.Unix(job.previewLastAccessed, 0))
+			running := job.previewHTTP != nil
+			job.mu.Unlock()
+			if !running {
+				return
+			}
+			if idle > time.Duration(inactivitySeconds)*time.Second {
+				log.Printf("preview: inactivity timeout for job %s", job.ID)
+				job.mu.Lock()
+				app.stopPreview(job)
+				job.mu.Unlock()
+				return
+			}
+		}
+	}()
 
 	log.Printf("preview: tunnel live for job %s at %s", job.ID, previewURL)
 	return previewURL, nil
 }
 
-// stopPreview kills the bun server and cloudflared subprocess.
+// stopPreview shuts down the file server and kills cloudflared.
 // Caller must hold job.mu.
 func (app *App) stopPreview(job *Job) {
-	if job.previewTimer != nil {
-		job.previewTimer.Stop()
-		job.previewTimer = nil
-	}
-	if job.previewBun != nil && job.previewBun.Process != nil {
-		job.previewBun.Process.Kill()
-		job.previewBun = nil
+	if job.previewHTTP != nil {
+		job.previewHTTP.Shutdown(context.Background())
+		job.previewHTTP = nil
 	}
 	if job.previewCF != nil && job.previewCF.Process != nil {
 		job.previewCF.Process.Kill()

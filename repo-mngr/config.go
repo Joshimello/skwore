@@ -35,7 +35,7 @@ func loadConfig() Config {
 		PreviewDomain:        os.Getenv("PREVIEW_DOMAIN"),
 		PreviewPortMin:       getEnvInt("PREVIEW_PORT_MIN", 30000),
 		PreviewPortMax:       getEnvInt("PREVIEW_PORT_MAX", 39999),
-		PreviewTTLSeconds:    getEnvInt("PREVIEW_TTL_SECONDS", 14400),
+		PreviewTTLSeconds:    getEnvInt("PREVIEW_TTL_SECONDS", 300),
 	}
 }
 

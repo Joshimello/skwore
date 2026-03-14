@@ -16,14 +16,14 @@ export async function POST({ request }) {
 		submissionId: string;
 		status: string;
 		result?: {
-			distUrl: string | null;
+			hasDist: boolean;
 			criteria: { criterionId: string; suggestedScore: number; comment: string }[];
 		} | null;
 	};
 
 	await db
 		.update(submission)
-		.set({ repoJobStatus: payload.status, distUrl: payload.result?.distUrl ?? null })
+		.set({ repoJobStatus: payload.status, distUrl: payload.result?.hasDist ? 'available' : null })
 		.where(eq(submission.id, payload.submissionId));
 
 	if (payload.status === 'done' && payload.result?.criteria) {
